@@ -1,4 +1,3 @@
-# script/run_experiment.py
 import argparse
 import math
 import time
