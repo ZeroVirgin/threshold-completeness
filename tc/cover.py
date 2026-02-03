@@ -13,7 +13,6 @@ from bitarray import bitarray
 _NUMBA_AVAILABLE = False
 try:
     import numba as nb  # type: ignore
-
     _NUMBA_AVAILABLE = True
 except Exception:
     _NUMBA_AVAILABLE = False
@@ -84,6 +83,55 @@ def coverage_bitset_parallel(A_list: List[int], n: int, blocks: Optional[int] = 
 
 # --- Numba-accelerated implementation (preferred path) -----------------------
 if _NUMBA_AVAILABLE:
+    @nb.njit(fastmath=True, cache=True)
+    def _upper_bound(A: np.ndarray, x: int) -> int:
+        """
+        Return the smallest index j such that A[j] > x (i.e., 1 + last index <= x).
+        If all A[j] <= x, returns len(A).
+        """
+        lo, hi = 0, A.size
+        while lo < hi:
+            mid = (lo + hi) // 2
+            if A[mid] <= x:
+                lo = mid + 1
+            else:
+                hi = mid
+        return lo
+
+    @nb.njit(parallel=True, fastmath=True, cache=True)
+    def _mark_pairs_twoptr(A: np.ndarray, n: int, hits: np.ndarray) -> None:
+        """
+        For each i, compute j_max = upper_bound(n - A[i]) and only loop j in [0, j_max).
+        That avoids entering the inner loop where all sums would exceed n.
+        """
+        m = A.size
+        for i in nb.prange(m):
+            ai = A[i]
+            j_max = _upper_bound(A, n - ai)
+            for j in range(j_max):
+                # s <= n by construction; no need for a branch here
+                s = ai + A[j]
+                hits[s] = 1
+
+    @nb.njit(parallel=True, fastmath=True, cache=True)
+    def _mark_pairs_twoptr_tiled(A: np.ndarray, n: int, hits: np.ndarray, tile: int = 8192) -> None:
+        """
+        Same as _mark_pairs_twoptr, but process j in tiles for better cache locality.
+        """
+        m = A.size
+        for i in nb.prange(m):
+            ai = A[i]
+            j_max = _upper_bound(A, n - ai)
+            jj = 0
+            while jj < j_max:
+                jend = jj + tile
+                if jend > j_max:
+                    jend = j_max
+                for j in range(jj, jend):
+                    s = ai + A[j]
+                    hits[s] = 1
+                jj = jend
+
     @nb.njit(parallel=True, fastmath=True, cache=True)
     def _mark_pairs(A: np.ndarray, n: int, hits: np.ndarray) -> None:
         """
@@ -98,6 +146,31 @@ if _NUMBA_AVAILABLE:
                 if s > n:
                     break
                 hits[s] = 1
+
+
+def coverage_bitset_njit(A_list: List[int], n: int, tiled: bool = False) -> bitarray:
+    """
+    Single-process Numba coverage with two-pointer upper-bound pruning.
+    Set tiled=True to use the tiled kernel for better cache locality.
+    """
+    if not _NUMBA_AVAILABLE:
+        raise ImportError("Numba is not available; install numba or use coverage_bitset/coverage_bitset_parallel.")
+    if n < 1:
+        B = bitarray(1)
+        B.setall(False)
+        return B
+    A = np.asarray(sorted(A_list), dtype=np.int32)
+    hits = np.zeros(n + 1, dtype=np.uint8)
+    if tiled:
+        _mark_pairs_twoptr_tiled(A, n, hits)
+    else:
+        _mark_pairs_twoptr(A, n, hits)
+    B = bitarray(n + 1)
+    B.setall(False)
+    idx = np.nonzero(hits)[0]
+    for k in idx:
+        B[k] = True
+    return B
 
 
 def coverage_bitset(A_list: List[int], n: int) -> bitarray:
@@ -137,7 +210,17 @@ def coverage_bitset(A_list: List[int], n: int) -> bitarray:
     if _NUMBA_AVAILABLE and impl != "parallel":
         hits = np.zeros(n + 1, dtype=np.uint8)
         try:
-            _mark_pairs(A, n, hits)  # JIT on first call; cached afterwards
+            # Keep the original kernel for backward-compatibility.
+            # You can switch to the two-pointer kernel by setting:
+            #   os.environ["TC_COVER_IMPL"] = "numba_twoptr" or "numba_twoptr_tiled"
+            mode = os.environ.get("TC_COVER_NUMBA_MODE", "").strip().lower()
+            if mode == "numba_twoptr_tiled":
+                _mark_pairs_twoptr_tiled(A, n, hits)
+            elif mode == "numba_twoptr":
+                _mark_pairs_twoptr(A, n, hits)
+            else:
+                _mark_pairs(A, n, hits)  # JIT on first call; cached afterwards
+
             B = bitarray(n + 1)
             B.setall(False)
             idx = np.nonzero(hits)[0]
@@ -155,4 +238,5 @@ def coverage_bitset(A_list: List[int], n: int) -> bitarray:
 __all__ = [
     "coverage_bitset",
     "coverage_bitset_parallel",
+    "coverage_bitset_njit",
 ]

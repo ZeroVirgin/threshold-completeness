@@ -1,4 +1,4 @@
-# script/run_experiment.py
+# scripts/run_experiment.py
 import argparse
 import math
 import time
@@ -6,7 +6,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from tc.smooth import primes_upto, generate_friables
-from tc.cover import coverage_bitset, coverage_bitset_parallel
+# Coverage engines are imported conditionally based on --engine
 from tc.diagnose import uncovered_indices, residue_hist, longest_uncovered_run
 from tc.thin import residue_balanced_thin
 
@@ -23,11 +23,24 @@ def main():
     ap.add_argument("--qmax-thin", type=int, default=64, help="Max modulus for thinning balances (2..qmax_thin)")
     ap.add_argument("--keep-ratio", type=float, default=1.0, help="Target retained fraction under thinning")
 
-    # add CLI flags
-    ap.add_argument("--parallel", action="store_true", help="Use multi-process coverage")
-    ap.add_argument("--blocks", type=int, default=8, help="Process count for --parallel")
+    # New engine flag
+    ap.add_argument(
+        "--engine",
+        choices=["njit", "tiled", "mp"],
+        default="njit",
+        help="njit=single-process; tiled=njit+cache-tiling; mp=multi-process (slower on Windows for large n)",
+    )
+    # Worker count for mp engine
+    ap.add_argument("--blocks", type=int, default=8, help="Process count for --engine mp")
+    # Legacy compatibility: --parallel maps to --engine mp (hidden in help)
+    ap.add_argument("--parallel", action="store_true", help=argparse.SUPPRESS)
 
     args = ap.parse_args()
+
+    # Map legacy --parallel to --engine mp
+    if getattr(args, "parallel", False) and args.engine != "mp":
+        print("[warn] --parallel is deprecated; using --engine=mp")
+        args.engine = "mp"
 
     n = args.n
     C = args.C
@@ -35,8 +48,7 @@ def main():
 
     print(f"[config] n={n:,}  C={C:.2f}  y=(log n)^C={y}  start={args.start}")
     print(f"[config] include_zero={args.include_zero}  thin={args.thin} qmax_thin={args.qmax_thin} keep_ratio={args.keep_ratio}")
-    if args.parallel:
-        print(f"[config] parallel=True blocks={args.blocks}")
+    print(f"[config] engine={args.engine}" + (f" blocks={args.blocks}" if args.engine == "mp" else ""))
 
     t0 = time.time()
     y_primes = primes_upto(y)
@@ -62,11 +74,16 @@ def main():
     else:
         A_used = friables
 
-    # replace coverage call
-    if args.parallel:
+    # Coverage selection by engine
+    if args.engine == "mp":
+        from tc.cover import coverage_bitset_parallel
         B = coverage_bitset_parallel(A_used, n, blocks=args.blocks)
-    else:
-        B = coverage_bitset(A_used, n)
+    elif args.engine == "tiled":
+        from tc.cover import coverage_bitset_njit
+        B = coverage_bitset_njit(A_used, n, tiled=True)
+    else:  # "njit"
+        from tc.cover import coverage_bitset_njit
+        B = coverage_bitset_njit(A_used, n, tiled=False)
 
     t3 = time.time()
     print(f"[stage] coverage computed (A+A) (t={t3-t2:.2f}s)")

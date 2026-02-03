@@ -1,17 +1,7 @@
-# scripts/plot_augment_curve.py
+# scripts/plot_augment_curve.py (replace contents)
 import argparse
-import subprocess
-import re
-import numpy as np
 import matplotlib.pyplot as plt
-
-def run_one(n, C, Cbump):
-    cmd = ["python", "-m", "scripts.run_augment", "--n", str(n), "--C", str(C), "--Cbump", str(Cbump)]
-    out = subprocess.run(cmd, capture_output=True, text=True).stdout
-    m = re.search(r"\[augment\]\s+added=(\d+)\s+remaining_uncovered=(\d+)", out)
-    if not m:
-        return None, None
-    return int(m.group(1)), int(m.group(2))
+from tc.augment_api import run_augment_once
 
 def main():
     ap = argparse.ArgumentParser()
@@ -27,11 +17,12 @@ def main():
 
     print(f"[config] n={args.n:,} C={args.C} bumps={bumps}")
     for b in bumps:
-        a, r = run_one(args.n, args.C, b)
-        print(f"  Cbump={b:.3f} -> added={a} remaining={r}")
-        added.append(a)
-        remain.append(r)
+        res = run_augment_once(args.n, args.C, b, start=2)
+        print(f"  Cbump={b:.3f} -> added={res['added']} remaining={res['unc_after']}")
+        added.append(res["added"])
+        remain.append(res["unc_after"])
 
+    import os; os.makedirs("plots", exist_ok=True)
     plt.figure(figsize=(6,4))
     plt.plot(bumps, added, marker="o")
     plt.xlabel("C bump (ΔC)")
