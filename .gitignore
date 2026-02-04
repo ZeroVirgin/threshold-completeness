@@ -1,0 +1,10 @@
+.venv/
+*.pyc
+*.pyo
+*.pyd
+.env
+.env.*
+Thumbs.db
+.DS_Store
+*.bat
+.bat/
