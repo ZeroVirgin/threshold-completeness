@@ -1,0 +1,16 @@
+cff-version: 1.2.0
+message: "If you use this repository, please cite it using the metadata below."
+title: "Threshold Completeness: Empirical studies of additive coverage by smooth numbers"
+authors:
+"  - family-names: \"Virgin\""
+"    given-names: \"Zero\""
+repository-code: "https://github.com/ZeroVirgin/threshold-completeness"
+license: "MIT"
+type: software
+version: "0.1.0"
+date-released: "2026-02-04"
+keywords:
+"  - smooth numbers"
+"  - additive combinatorics"
+"  - coverage thresholds"
+"  - Dickman distribution"
